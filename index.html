@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>五子棋遊戲</title>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0e6d5; /* 淡黃色背景 */
+            color: #333;
+        }
+
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            background-color: #ffffff; /* 白色容器 */
+            border-radius: 15px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #5d4037; /* 深棕色標題 */
+            margin-bottom: 20px;
+        }
+
+        canvas {
+            background-color: #c9b48f; /* 棋盤背景色 */
+            border: 5px solid #5d4037; /* 棋盤邊框 */
+            border-radius: 10px;
+            cursor: pointer;
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2);
+            touch-action: none; /* 禁用觸控事件的默認行為 */
+        }
+
+        .status-area {
+            margin-top: 20px;
+            text-align: center;
+        }
+        
+        .controls {
+            display: flex;
+            flex-wrap: wrap; /* 允許換行 */
+            justify-content: center;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        #status {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #d8573b; /* 橙紅色狀態文字 */
+            transition: color 0.3s ease;
+        }
+        
+        #score {
+            font-size: 1.2em;
+            margin-top: 10px;
+            font-weight: bold;
+            color: #5d4037;
+        }
+
+        .control-button {
+            padding: 10px 20px;
+            font-size: 1em;
+            font-weight: bold;
+            color: #ffffff;
+            background-color: #5d4037;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .control-button:hover {
+            background-color: #7b5e57;
+            transform: translateY(-2px);
+        }
+
+        .control-button:active {
+            transform: translateY(0);
+        }
+
+        /* 警告訊息的特殊樣式 */
+        .threat-warning {
+            color: #ff0000 !important; /* 紅色 */
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        /* 獲勝訊息的特殊樣式 */
+        .win-message {
+            color: #008000 !important; /* 綠色 */
+            animation: bounceIn 1s ease-out;
+        }
+
+        @keyframes bounceIn {
+            0% {
+                transform: scale(0.1);
+                opacity: 0;
+            }
+            60% {
+                transform: scale(1.2);
+                opacity: 1;
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1>五子棋</h1>
+        <canvas id="gameCanvas"></canvas>
+        <div class="status-area">
+            <p id="status">黑棋 (玩家 1) 回合</p>
+            <p id="score">黑棋：0 勝 | 白棋：0 勝</p>
+            <div class="controls">
+                <button id="modeButton" class="control-button">與電腦對戰</button>
+                <button id="hintButton" class="control-button">提示</button>
+                <button id="resetButton" class="control-button">重新開始</button>
+                <button id="resetScoreButton" class="control-button">重設計分</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 獲取 Canvas 元素和其上下文
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 獲取狀態和按鈕元素
+        const statusEl = document.getElementById('status');
+        const scoreEl = document.getElementById('score');
+        const resetButton = document.getElementById('resetButton');
+        const hintButton = document.getElementById('hintButton');
+        const resetScoreButton = document.getElementById('resetScoreButton');
+        const modeButton = document.getElementById('modeButton');
+
+        // 定義遊戲板的尺寸和棋子的半徑
+        const gridSize = 15;
+        let cellSize;
+        const pieceRadius = 15;
+
+        // 定義遊戲狀態變量
+        let board;
+        let currentPlayer; // 1: 玩家1 (黑棋), 2: 玩家2 (白棋)
+        let isGameOver;
+        let hintPositions = []; // 用來存儲當前玩家的提示位置
+        let threatPositions = []; // 用來存儲對手的威脅位置
+        let player1Wins = 0;
+        let player2Wins = 0;
+        let isAIGame = false; // 是否為人機對戰模式
+        let isProcessing = false; // 防止重複點擊或在AI思考時點擊
+        let originalStatus = ''; // 用來存儲正常的狀態訊息，以備恢復
+
+        // AI 相關變數
+        const AI_PLAYER = 2; // AI 永遠是白棋
+        const AI_OPPONENT = 1;
+        const searchDepth = 3; // AI 搜尋深度
+
+        // 檢查棋盤是否已滿，判斷是否平局
+        function checkDraw() {
+            for (let row = 0; row < gridSize; row++) {
+                for (let col = 0; col < gridSize; col++) {
+                    if (board[row][col] === 0) {
+                        return false; // 還有空位
+                    }
+                }
+            }
+            return true; // 棋盤已滿，平局
+        }
+
+        // 檢查是否有玩家獲勝
+        function checkWin(row, col) {
+            const player = board[row][col];
+            if (player === 0) return false;
+
+            // 定義所有可能的獲勝方向 (水平、垂直、兩條對角線)
+            const directions = [
+                [0, 1],   // 水平
+                [1, 0],   // 垂直
+                [1, 1],   // 對角線 \
+                [1, -1]  // 對角線 /
+            ];
+
+            // 遍歷所有方向
+            for (const [dr, dc] of directions) {
+                let count = 1;
+                // 向一個方向檢查
+                for (let i = 1; i < 5; i++) {
+                    const r = row + i * dr;
+                    const c = col + i * dc;
+                    if (r >= 0 && r < gridSize && c >= 0 && c < gridSize && board[r][c] === player) {
+                        count++;
+                    } else {
+                        break;
+                    }
+                }
+                // 向相反方向檢查
+                for (let i = 1; i < 5; i++) {
+                    const r = row - i * dr;
+                    const c = col - i * dc;
+                    if (r >= 0 && r < gridSize && c >= 0 && c < gridSize && board[r][c] === player) {
+                        count++;
+                    } else {
+                        break;
+                    }
+                }
+
+                if (count >= 5) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /**
+         * 尋找特定玩家的獲勝位置。
+         * @param {number} player 要檢查的玩家編號 (1或2)。
+         * @returns {Array<Object>} 包含所有獲勝位置的陣列。
+         */
+        function findWinningMoves(player) {
+            const winningMoves = [];
+            // 遍歷所有空位
+            for (let row = 0; row < gridSize; row++) {
+                for (let col = 0; col < gridSize; col++) {
+                    if (board[row][col] === 0) {
+                        // 暫時下棋以模擬
+                        board[row][col] = player;
+                        // 檢查這個位置是否能贏
+                        if (checkWin(row, col)) {
+                            // 如果能贏，添加到獲勝位置列表
+                            winningMoves.push({ row, col });
+                        }
+                        // 恢復棋盤狀態
+                        board[row][col] = 0;
+                    }
+                }
+            }
+            return winningMoves;
+        }
+
+        /**
+         * 播放警告提示音。
+         * 使用 Web Audio API 創建一個簡單的蜂鳴聲。
+         */
+        function playThreatSound() {
+            // 檢查瀏覽器是否支援 AudioContext
+            if (!window.AudioContext && !window.webkitAudioContext) {
+                console.warn('您的瀏覽器不支持 Web Audio API');
+                return;
+            }
+
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // 創建振盪器節點
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            // 設置振盪器類型和頻率
+            oscillator.type = 'sine'; // 正弦波
+            oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // A4 音高
+
+            // 連接節點
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            // 設置增益，以控制音量
+            gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+            
+            // 開始播放
+            oscillator.start();
+            
+            // 停止播放（短暫的蜂鳴聲）
+            oscillator.stop(audioContext.currentTime + 0.2); // 0.2秒後停止
+        }
+        
+        /**
+         * 播放勝利音效。
+         * 創建一個短促、音調上升的音效。
+         */
+        function playWinSound() {
+            if (!window.AudioContext && !window.webkitAudioContext) {
+                console.warn('您的瀏覽器不支持 Web Audio API');
+                return;
+            }
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.type = 'triangle'; // 三角波，音色更柔和
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            // 創建音調上升效果
+            const now = audioContext.currentTime;
+            oscillator.frequency.setValueAtTime(440, now); // 起始頻率 A4
+            oscillator.frequency.linearRampToValueAtTime(880, now + 0.3); // 0.3秒內升至 A5
+
+            // 調整音量以防止過於刺耳
+            gainNode.gain.setValueAtTime(0, now);
+            gainNode.gain.linearRampToValueAtTime(0.5, now + 0.05);
+            gainNode.gain.linearRampToValueAtTime(0, now + 0.3);
+
+            oscillator.start(now);
+            oscillator.stop(now + 0.3);
+        }
+
+        // 繪製棋盤和棋子
+        function drawBoard() {
+            // 清空畫布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製網格線
+            ctx.strokeStyle = '#5d4037'; // 棋線顏色
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            for (let i = 0; i < gridSize; i++) {
+                // 繪製水平線
+                ctx.beginPath();
+                ctx.moveTo(cellSize / 2, i * cellSize + cellSize / 2);
+                ctx.lineTo(canvas.width - cellSize / 2, i * cellSize + cellSize / 2);
+                ctx.stroke();
+
+                // 繪製垂直線
+                ctx.beginPath();
+                ctx.moveTo(i * cellSize + cellSize / 2, cellSize / 2);
+                ctx.lineTo(i * cellSize + cellSize / 2, canvas.height - cellSize / 2);
+                ctx.stroke();
+            }
+
+            // 繪製天元和星位點
+            ctx.fillStyle = '#5d4037';
+            const starPoints = [
+                { row: 3, col: 3 },
+                { row: 3, col: 11 },
+                { row: 7, col: 7 }, // 天元
+                { row: 11, col: 3 },
+                { row: 11, col: 11 }
+            ];
+            starPoints.forEach(point => {
+                const x = point.col * cellSize + cellSize / 2;
+                const y = point.row * cellSize + cellSize / 2;
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // 繪製所有已下的棋子
+            for (let row = 0; row < gridSize; row++) {
+                for (let col = 0; col < gridSize; col++) {
+                    if (board[row][col] === 1) {
+                        drawPiece(row, col, '#000000'); // 黑棋
+                    } else if (board[row][col] === 2) {
+                        drawPiece(row, col, '#ffffff'); // 白棋
+                    }
+                }
+            }
+
+            // 繪製當前玩家的提示位置
+            hintPositions.forEach(pos => {
+                drawMarker(pos.row, pos.col, '#d8573b', 3); // 橙紅色
+            });
+
+            // 繪製對手的威脅位置
+            threatPositions.forEach(pos => {
+                drawMarker(pos.row, pos.col, '#ff0000', 5); // 鮮紅色，更粗
+            });
+        }
+
+        // 繪製單個棋子
+        function drawPiece(row, col, color) {
+            const x = col * cellSize + cellSize / 2;
+            const y = row * cellSize + cellSize / 2;
+
+            ctx.beginPath();
+            ctx.arc(x, y, pieceRadius, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            
+            // 繪製棋子的邊框
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        // 繪製標記圓圈
+        function drawMarker(row, col, color, width) {
+            const x = col * cellSize + cellSize / 2;
+            const y = row * cellSize + cellSize / 2;
+
+            ctx.beginPath();
+            ctx.arc(x, y, pieceRadius + 5, 0, Math.PI * 2);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width;
+            ctx.stroke();
+        }
+
+        // 更新計分顯示
+        function updateScoreDisplay() {
+            scoreEl.textContent = `黑棋：${player1Wins} 勝 | 白棋：${player2Wins} 勝`;
+        }
+
+        // AI 邏輯
+        function makeAIMove() {
+            // 如果遊戲結束或不是 AI 的回合，則返回
+            if (isGameOver || currentPlayer !== AI_PLAYER) {
+                return;
+            }
+
+            isProcessing = true; // AI 思考時鎖定輸入
+            statusEl.textContent = '電腦正在思考...';
+
+            // 尋找最佳移動位置
+            const bestMove = findBestMove();
+
+            // 模擬人類下棋的延遲，讓遊戲體驗更自然
+            setTimeout(() => {
+                isProcessing = false; // 解鎖輸入
+                // 檢查是否是有效移動，如果不是，則尋找隨機空位
+                if (bestMove && bestMove.row !== -1 && board[bestMove.row][bestMove.col] === 0) {
+                    handleMove({
+                        clientX: canvas.getBoundingClientRect().left + bestMove.col * cellSize + cellSize / 2,
+                        clientY: canvas.getBoundingClientRect().top + bestMove.row * cellSize + cellSize / 2
+                    });
+                } else {
+                    // 如果沒有找到最佳移動，隨機選擇一個空位作為備用
+                    const emptyCells = [];
+                    for(let r = 0; r < gridSize; r++) {
+                        for(let c = 0; c < gridSize; c++) {
+                            if(board[r][c] === 0) emptyCells.push({row: r, col: c});
+                        }
+                    }
+                    if(emptyCells.length > 0) {
+                        const randomIndex = Math.floor(Math.random() * emptyCells.length);
+                        const randomMove = emptyCells[randomIndex];
+                        handleMove({
+                            clientX: canvas.getBoundingClientRect().left + randomMove.col * cellSize + cellSize / 2,
+                            clientY: canvas.getBoundingClientRect().top + randomMove.row * cellSize + cellSize / 2
+                        });
+                    }
+                }
+            }, 750); // 延遲 750 毫秒
+        }
+
+        /**
+         * Minimax 演算法，帶有 Alpha-Beta 剪枝，以優化搜尋效率。
+         * @param {number[][]} boardState 當前棋盤狀態。
+         * @param {number} depth 剩餘搜尋深度。
+         * @param {number} alpha Alpha 節點的值。
+         * @param {number} beta Beta 節點的值。
+         * @param {boolean} isMaximizingPlayer 是否為最大化玩家（AI）。
+         * @returns {number} 評估分數。
+         */
+        function minimax(boardState, depth, alpha, beta, isMaximizingPlayer) {
+            // 達到終止條件：深度為0或遊戲結束
+            if (depth === 0 || isGameOver) {
+                return evaluateBoard(boardState);
+            }
+
+            // 尋找可下的棋子位置
+            const moves = getViableMoves(boardState);
+            if (moves.length === 0) {
+                return evaluateBoard(boardState);
+            }
+
+            if (isMaximizingPlayer) {
+                let maxEval = -Infinity;
+                for (const move of moves) {
+                    boardState[move.row][move.col] = AI_PLAYER;
+                    const evaluation = minimax(boardState, depth - 1, alpha, beta, false);
+                    boardState[move.row][move.col] = 0; // 回溯
+                    maxEval = Math.max(maxEval, evaluation);
+                    alpha = Math.max(alpha, evaluation);
+                    if (beta <= alpha) {
+                        break; // Beta 剪枝
+                    }
+                }
+                return maxEval;
+            } else {
+                let minEval = Infinity;
+                for (const move of moves) {
+                    boardState[move.row][move.col] = AI_OPPONENT;
+                    const evaluation = minimax(boardState, depth - 1, alpha, beta, true);
+                    boardState[move.row][move.col] = 0; // 回溯
+                    minEval = Math.min(minEval, evaluation);
+                    beta = Math.min(beta, evaluation);
+                    if (beta <= alpha) {
+                        break; // Alpha 剪枝
+                    }
+                }
+                return minEval;
+            }
+        }
+
+        /**
+         * 尋找最佳移動。
+         * 優先考慮：1. 立即獲勝，2. 阻止對手獲勝，3. 其他最佳走法。
+         * @returns {Object} 最佳移動的位置 {row, col}。
+         */
+        function findBestMove() {
+            // 1. 優先尋找能立即獲勝的走法
+            let winningMoves = findWinningMoves(AI_PLAYER);
+            if (winningMoves.length > 0) {
+                return winningMoves[0];
+            }
+
+            // 2. 其次，尋找能阻止對手獲勝的走法
+            let blockingMoves = findWinningMoves(AI_OPPONENT);
+            if (blockingMoves.length > 0) {
+                return blockingMoves[0];
+            }
+
+            // 3. 如果沒有立即的勝負，則使用 Minimax 演算法尋找最佳走法
+            let bestScore = -Infinity;
+            let bestMove = null;
+            const viableMoves = getViableMoves(board);
+
+            // 如果是第一步棋，選擇中心點
+            if (viableMoves.length === gridSize * gridSize) {
+                return { row: Math.floor(gridSize / 2), col: Math.floor(gridSize / 2) };
+            }
+
+            for (const move of viableMoves) {
+                board[move.row][move.col] = AI_PLAYER;
+                // 使用 Alpha-Beta 剪枝後的 Minimax
+                const score = minimax(board, searchDepth - 1, -Infinity, Infinity, false);
+                board[move.row][move.col] = 0; // 回溯
+
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMove = move;
+                }
+            }
+
+            return bestMove;
+        }
+
+        /**
+         * 尋找所有鄰近已下棋子的空位，以優化搜尋範圍。
+         * @param {number[][]} boardState 當前棋盤狀態。
+         * @returns {Array<Object>} 有效的走法列表。
+         */
+        function getViableMoves(boardState) {
+            const viableMoves = new Set();
+            const occupiedCells = [];
+
+            // 遍歷所有已下棋子的位置
+            for (let r = 0; r < gridSize; r++) {
+                for (let c = 0; c < gridSize; c++) {
+                    if (boardState[r][c] !== 0) {
+                        occupiedCells.push({ r, c });
+                    }
+                }
+            }
+            
+            // 如果是空盤，則返回所有格子
+            if (occupiedCells.length === 0) {
+                for (let r = 0; r < gridSize; r++) {
+                    for (let c = 0; c < gridSize; c++) {
+                        viableMoves.add(`${r},${c}`);
+                    }
+                }
+                return Array.from(viableMoves).map(pos => {
+                    const [row, col] = pos.split(',').map(Number);
+                    return { row, col };
+                });
+            }
+
+            // 遍歷已下棋子的位置，並尋找其周圍的空位
+            occupiedCells.forEach(cell => {
+                for (let dr = -1; dr <= 1; dr++) {
+                    for (let dc = -1; dc <= 1; dc++) {
+                        if (dr === 0 && dc === 0) continue;
+                        const r = cell.r + dr;
+                        const c = cell.c + dc;
+
+                        if (r >= 0 && r < gridSize && c >= 0 && c < gridSize && boardState[r][c] === 0) {
+                            viableMoves.add(`${r},${c}`);
+                        }
+                    }
+                }
+            });
+
+            // 將 set 轉換為 array
+            return Array.from(viableMoves).map(pos => {
+                const [row, col] = pos.split(',').map(Number);
+                return { row, col };
+            });
+        }
+
+        /**
+         * 評估棋盤狀態。
+         * 根據連珠棋形（活五、活四、沖四、活三等）計算分數。
+         * 這裡的分數是給 AI (AI_PLAYER) 和對手 (AI_OPPONENT) 分別計算的。
+         * @param {number[][]} boardState 當前棋盤狀態。
+         * @returns {number} 棋盤的評估分數。
+         */
+        function evaluateBoard(boardState) {
+            let score = 0;
+            // 定義分數
+            const scores = {
+                'live_5': 100000,
+                'live_4': 10000,
+                'blocked_4': 1000,
+                'live_3': 1000,
+                'blocked_3': 100,
+                'live_2': 100,
+                'blocked_2': 10,
+                'live_1': 1
+            };
+
+            // 檢查所有方向
+            const directions = [[0, 1], [1, 0], [1, 1], [1, -1]];
+
+            // 遍歷所有格子
+            for (let r = 0; r < gridSize; r++) {
+                for (let c = 0; c < gridSize; c++) {
+                    const piece = boardState[r][c];
+                    if (piece === 0) continue;
+
+                    // 對每個方向進行模式匹配
+                    for (const [dr, dc] of directions) {
+                        const pattern = getPattern(r, c, dr, dc, boardState);
+                        
+                        // 評估 AI 玩家的棋形
+                        score += evaluatePattern(pattern, AI_PLAYER, scores);
+                        
+                        // 評估對手玩家的棋形
+                        score -= evaluatePattern(pattern, AI_OPPONENT, scores);
+                    }
+                }
+            }
+
+            return score;
+        }
+        
+        /**
+         * 從指定位置和方向獲取棋形字符串。
+         * @param {number} r 起始行。
+         * @param {number} c 起始列。
+         * @param {number} dr 行方向。
+         * @param {number} dc 列方向。
+         * @param {number[][]} boardState 當前棋盤狀態。
+         * @returns {string} 棋形字符串，例如 "011110" 表示活四。
+         */
+        function getPattern(r, c, dr, dc, boardState) {
+            let pattern = '';
+            // 檢查前後的空位或邊界
+            const prevR = r - dr;
+            const prevC = c - dc;
+            const prevChar = (prevR >= 0 && prevR < gridSize && prevC >= 0 && prevC < gridSize) ? boardState[prevR][prevC] : -1;
+            pattern += (prevChar === 0) ? '0' : 'x';
+
+            // 獲取連續的五個棋子
+            for (let i = 0; i < 5; i++) {
+                const curR = r + i * dr;
+                const curC = c + i * dc;
+                if (curR >= 0 && curR < gridSize && curC >= 0 && curC < gridSize) {
+                    pattern += boardState[curR][curC];
+                } else {
+                    pattern += '-1'; // 超出邊界
+                }
+            }
+            
+            // 檢查後面的空位或邊界
+            const nextR = r + 5 * dr;
+            const nextC = c + 5 * dc;
+            const nextChar = (nextR >= 0 && nextR < gridSize && nextC >= 0 && nextC < gridSize) ? boardState[nextR][nextC] : -1;
+            pattern += (nextChar === 0) ? '0' : 'x';
+
+            return pattern;
+        }
+
+        /**
+         * 評估棋形字符串並返回分數。
+         * @param {string} pattern 棋形字符串。
+         * @param {number} player 要評估的玩家。
+         * @param {Object} scores 分數表。
+         * @returns {number} 該棋形的分數。
+         */
+        function evaluatePattern(pattern, player, scores) {
+            let p = pattern.replace(new RegExp(player, 'g'), '1').replace(new RegExp(player === 1 ? 2 : 1, 'g'), 'x').replace(/-1/g, 'x');
+            let score = 0;
+
+            if (p.includes('11111')) { score += scores.live_5; }
+            if (p.includes('011110')) { score += scores.live_4; }
+            if (p.includes('x11110') || p.includes('01111x')) { score += scores.blocked_4; }
+            if (p.includes('01110') || p.includes('010110') || p.includes('011010')) { score += scores.live_3; }
+            if (p.includes('x1110') || p.includes('0111x') || p.includes('x10110') || p.includes('01101x')) { score += scores.blocked_3; }
+            if (p.includes('001100') || p.includes('01010') || p.includes('01100')) { score += scores.live_2; }
+            if (p.includes('x1100') || p.includes('0011x') || p.includes('x1010') || p.includes('0101x')) { score += scores.blocked_2; }
+            
+            return score;
+        }
+
+        // 處理點擊事件
+        function handleMove(event) {
+            // 如果遊戲結束或正在處理中，則不執行任何操作
+            if (isGameOver || isProcessing) {
+                return;
+            }
+
+            // 清除之前的提示和威脅標記
+            hintPositions = [];
+            threatPositions = [];
+
+            // 獲取點擊在 canvas 上的坐標
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            // 將坐標轉換為棋盤格子的索引
+            const col = Math.floor(x / cellSize);
+            const row = Math.floor(y / cellSize);
+
+            // 檢查點擊是否在棋盤內且該位置沒有棋子
+            if (row >= 0 && row < gridSize && col >= 0 && col < gridSize && board[row][col] === 0) {
+                // 1. 下棋
+                board[row][col] = currentPlayer;
+                
+                // 檢查是否獲勝
+                if (checkWin(row, col)) {
+                    isGameOver = true;
+                    statusEl.textContent = `${currentPlayer === 1 ? '黑棋 (玩家 1)' : '白棋 (電腦)'} 獲勝！`;
+                    statusEl.classList.add('win-message');
+                    playWinSound();
+                    
+                    // 更新分數
+                    if (currentPlayer === 1) {
+                        player1Wins++;
+                    } else {
+                        player2Wins++;
+                    }
+                    updateScoreDisplay();
+                    
+                    drawBoard(); // 遊戲結束後繪製最終棋盤
+                    return;
+                }
+                
+                // 2. 檢查自己是否聽牌
+                const selfWinningMoves = findWinningMoves(currentPlayer);
+                if (selfWinningMoves.length > 0) {
+                    // 3. 如果自己有獲勝機會，播放提示音並顯示警告訊息
+                    threatPositions = selfWinningMoves; // 使用 threatPositions 標示自己的獲勝點
+                    originalStatus = `恭喜！你聽牌了！`;
+                    statusEl.textContent = originalStatus;
+                    statusEl.classList.add('threat-warning');
+                    playThreatSound();
+                } else {
+                    // 如果沒有，清除舊的警告
+                    statusEl.classList.remove('threat-warning');
+                    originalStatus = ''; // 清除原始狀態
+                }
+
+                // 檢查是否平局
+                if (checkDraw()) {
+                    isGameOver = true;
+                    statusEl.textContent = '平局！';
+                    drawBoard(); // 遊戲結束後繪製最終棋盤
+                    return;
+                }
+
+                // 4. 切換玩家
+                currentPlayer = currentPlayer === 1 ? 2 : 1;
+                
+                // 更新狀態訊息
+                const nextPlayerText = `${currentPlayer === 1 ? '黑棋 (玩家 1)' : '白棋 (電腦)'} 回合`;
+                statusEl.textContent = originalStatus || nextPlayerText;
+
+                drawBoard(); // 繪製新的棋子和提示
+
+                // 如果是人機對戰模式，且輪到 AI 回合，則呼叫 AI 函數
+                if (isAIGame && currentPlayer === AI_PLAYER) {
+                    makeAIMove();
+                }
+            } else {
+                // 如果點擊了無效位置，給予短暫提示
+                const invalidStatus = '這個位置已經有棋子了！請選擇其他位置。';
+                if (statusEl.textContent !== invalidStatus) {
+                    originalStatus = statusEl.textContent; // 保存當前狀態
+                    statusEl.textContent = invalidStatus;
+                    statusEl.classList.add('threat-warning');
+                    setTimeout(() => {
+                        statusEl.textContent = originalStatus;
+                        statusEl.classList.remove('threat-warning');
+                        originalStatus = '';
+                    }, 1500); // 1.5秒後恢復
+                }
+            }
+        }
+
+        // 顯示當前玩家的聽牌位置
+        function findHint() {
+            if (isGameOver) return;
+            // 清除對手威脅標記
+            threatPositions = [];
+            hintPositions = findWinningMoves(currentPlayer);
+            drawBoard(); // 繪製提示
+        }
+
+        // 重設遊戲
+        function resetGame() {
+            // 重新初始化遊戲板
+            board = Array(gridSize).fill(0).map(() => Array(gridSize).fill(0));
+            currentPlayer = 1;
+            isGameOver = false;
+            hintPositions = []; // 清空提示
+            threatPositions = []; // 清空威脅
+            isProcessing = false; // 解鎖
+            
+            // 根據模式設定初始狀態訊息
+            if (isAIGame) {
+                statusEl.textContent = '請下第一顆棋子 (黑棋)';
+            } else {
+                statusEl.textContent = '黑棋 (玩家 1) 回合'; 
+            }
+            
+            statusEl.classList.remove('threat-warning');
+            statusEl.classList.remove('win-message');
+            drawBoard();
+
+            // 如果是人機對戰模式，且輪到 AI 回合，則呼叫 AI 函數
+            if (isAIGame && currentPlayer === AI_PLAYER) {
+                makeAIMove();
+            }
+        }
+
+        // 重設計分
+        function resetScore() {
+            player1Wins = 0;
+            player2Wins = 0;
+            updateScoreDisplay();
+        }
+
+        // 切換對戰模式
+        function toggleMode() {
+            isAIGame = !isAIGame;
+            modeButton.textContent = isAIGame ? "人 vs 人" : "與電腦對戰";
+            resetGame(); // 切換模式後重置遊戲
+        }
+
+        // 處理窗口大小變化
+        function resizeCanvas() {
+            const container = document.querySelector('.game-container');
+            const containerSize = Math.min(container.clientWidth, window.innerHeight - 150);
+            
+            canvas.width = containerSize;
+            canvas.height = containerSize;
+            
+            cellSize = canvas.width / gridSize;
+            drawBoard();
+        }
+
+        // 初始化遊戲
+        function init() {
+            // 添加事件監聽器
+            canvas.addEventListener('click', handleMove);
+            resetButton.addEventListener('click', resetGame);
+            hintButton.addEventListener('click', findHint);
+            resetScoreButton.addEventListener('click', resetScore);
+            modeButton.addEventListener('click', toggleMode);
+            window.addEventListener('resize', resizeCanvas);
+
+            // 初始設置
+            resetGame();
+            resizeCanvas();
+            updateScoreDisplay(); // 初始化計分顯示
+        }
+
+        // 頁面加載完成後開始
+        window.onload = init;
+    </script>
+</body>
+</html>
